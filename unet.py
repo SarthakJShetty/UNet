@@ -1,8 +1,11 @@
 from collections import OrderedDict
+from glob import glob
 from typing import List, Tuple
 
 import torch
-from ipdb import set_trace
+from torchvision.io import read_image
+from torchvision.transforms.v2 import Compose, ToDtype, ToImage
+from tqdm import tqdm
 
 
 class ContractingBranch(torch.nn.Module):
@@ -115,7 +118,7 @@ class ExpandingBranch(torch.nn.Module):
 
 
 class SegmentationHead(torch.nn.Module):
-    def __init__(self, in_channels=64, out_channels=2):
+    def __init__(self, in_channels=64, out_channels=1):
         super().__init__()
         self._segmentation_head = torch.nn.Sequential(
             torch.nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=(1, 1), stride=(1, 1))
@@ -126,12 +129,26 @@ class SegmentationHead(torch.nn.Module):
 
 
 class UpsamplingLayer(torch.nn.Module):
-    def __init__(self, up_sampling_size: Tuple[int, int] = (500, 500)):
+    def __init__(self, up_sampling_size: Tuple[int, int] = (1280, 1918)):
         super().__init__()
         self._upsampling_layer = torch.nn.Upsample(size=up_sampling_size)
 
     def forward(self, expanding_block_latent: torch.Tensor):
         return self._upsampling_layer(expanding_block_latent)
+
+
+class CarvanaDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_location: str = "dataset/"):
+        self._dataset_location = dataset_location
+        self._images = glob(self._dataset_location + "images/*.jpg")
+        self._targets = [image.replace("images", "labels").replace(".jpg", "_mask.jpg") for image in self._images]
+        self._transforms = Compose([ToImage(), ToDtype(torch.float32, scale=True)])
+
+    def __len__(self):
+        return len(self._images)
+
+    def __getitem__(self, index: int) -> torch.Tensor:
+        return self._transforms(read_image(self._images[index])), self._transforms(read_image(self._targets[index]))[:1, :, :]
 
 
 class UNet(torch.nn.Module):
@@ -153,6 +170,27 @@ class UNet(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    x = torch.randn(1, 3, 500, 500)
+    dataset = CarvanaDataset()
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=2, shuffle=True)
     model = UNet()
-    model(x)
+    loss_function = torch.nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=3e-4)
+
+    model.train()
+
+    epochs = 100
+    batch_loss = 0
+
+    for epoch in range(epochs):
+
+        for image, label in tqdm(dataloader):
+            optimizer.zero_grad()
+
+            prediction = model(image)
+            loss = loss_function(prediction, label)
+
+            batch_loss += loss
+            loss.backward()
+            optimizer.step()
+
+        print(f"Epoch loss: {batch_loss/len(dataloader)}")
