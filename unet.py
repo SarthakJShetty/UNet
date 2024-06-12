@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from typing import List, Tuple
 
 import torch
 from ipdb import set_trace
@@ -12,21 +13,41 @@ class ContractingBranch(torch.nn.Module):
         super().__init__()
         self._blocks_list = [
             torch.nn.Sequential(
-                torch.nn.Conv2d(in_channels=out_channels[i], out_channels=out_channels[i + 1], kernel_size=(3, 3)),
-                torch.nn.ReLU(),
-                torch.nn.Conv2d(in_channels=out_channels[i + 1], out_channels=out_channels[i + 1], kernel_size=(3, 3)),
-                torch.nn.ReLU(),
-                torch.nn.MaxPool2d((2, 2), 2),
+                OrderedDict(
+                    [
+                        (
+                            f"contracting_layers_{i}",
+                            torch.nn.Sequential(
+                                torch.nn.Conv2d(in_channels=out_channels[i], out_channels=out_channels[i + 1], kernel_size=(3, 3)),
+                                torch.nn.ReLU(),
+                                torch.nn.Conv2d(in_channels=out_channels[i + 1], out_channels=out_channels[i + 1], kernel_size=(3, 3)),
+                                torch.nn.ReLU(),
+                            ),
+                        ),
+                        (
+                            f"max_pool_{i}",
+                            torch.nn.MaxPool2d((2, 2), 2),
+                        ),
+                    ]
+                )
             )
             for i in range(0, len(out_channels) - 1)
         ]
+
         self._contracting_branch = torch.nn.Sequential(*self._blocks_list)
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
-        return self._contracting_branch(image)
+    def forward(self, input_tensor: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        _contracting_block_latents = []
+        for _contracting_block in self._contracting_branch:
+
+            _downsampled_features = _contracting_block[0](input_tensor)
+            input_tensor = _contracting_block[1](_downsampled_features)
+
+            _contracting_block_latents.append(_downsampled_features)
+        return input_tensor, _contracting_block_latents
 
 
-class BottleNeck(ContractingBranch):
+class BottleNeck(torch.nn.Module):
     def __init__(self, in_channels=[512, 1024, 1024]):
         super().__init__()
         self._blocks_list = [
@@ -37,8 +58,8 @@ class BottleNeck(ContractingBranch):
         ]
         self._bottleneck = torch.nn.Sequential(*self._blocks_list)
 
-    def forward(self, contracting_block_latent: torch.Tensor) -> torch.Tensor:
-        return self._bottleneck(contracting_block_latent)
+    def forward(self, contracting_branch_latent: torch.Tensor) -> torch.Tensor:
+        return self._bottleneck(contracting_branch_latent)
 
 
 class ExpandingBranch(torch.nn.Module):
@@ -49,19 +70,48 @@ class ExpandingBranch(torch.nn.Module):
         super().__init__()
         self._blocks_list = [
             torch.nn.Sequential(
-                torch.nn.ConvTranspose2d(in_channels=in_channels[i], out_channels=in_channels[i + 1], kernel_size=(2, 2), stride=2),
-                torch.nn.Conv2d(in_channels=in_channels[i + 1], out_channels=in_channels[i + 1], kernel_size=(3, 3)),
-                torch.nn.ReLU(),
-                torch.nn.Conv2d(in_channels=in_channels[i + 1], out_channels=in_channels[i + 1], kernel_size=(3, 3)),
-                torch.nn.ReLU(),
+                OrderedDict(
+                    [
+                        (
+                            f"upsampling_conv_transpose_{i}",
+                            torch.nn.ConvTranspose2d(
+                                in_channels=in_channels[i], out_channels=in_channels[i + 1], kernel_size=(2, 2), stride=2
+                            ),
+                        ),
+                        (
+                            f"conv_layers_{i}",
+                            torch.nn.Sequential(
+                                torch.nn.Conv2d(in_channels=in_channels[i], out_channels=in_channels[i + 1], kernel_size=(3, 3)),
+                                torch.nn.ReLU(),
+                                torch.nn.Conv2d(in_channels=in_channels[i + 1], out_channels=in_channels[i + 1], kernel_size=(3, 3)),
+                                torch.nn.ReLU(),
+                            ),
+                        ),
+                    ]
+                )
             )
             for i in range(len(in_channels) - 1)
         ]
+
         self._expanding_branch = torch.nn.Sequential(*self._blocks_list)
 
-    def forward(self, bottleneck_latent: torch.Tensor) -> torch.Tensor:
-        _output = self._expanding_branch(bottleneck_latent)
-        set_trace()
+    def forward(self, latent: torch.Tensor, contracting_branch_latents: torch.Tensor) -> torch.Tensor:
+        for idx in range(len(self._expanding_branch)):
+            _transpose_output = self._expanding_branch[idx][0](latent)
+            _contracting_branch_skip_connection = contracting_branch_latents[::-1][idx][
+                :,
+                :,
+                (contracting_branch_latents[::-1][idx].shape[-2] - _transpose_output.shape[-2])
+                // 2 : (contracting_branch_latents[::-1][idx].shape[-2] - _transpose_output.shape[-2])
+                // 2
+                + _transpose_output.shape[-2],
+                (contracting_branch_latents[::-1][idx].shape[-1] - _transpose_output.shape[-1])
+                // 2 : (contracting_branch_latents[::-1][idx].shape[-1] - _transpose_output.shape[-1])
+                // 2
+                + _transpose_output.shape[-1],
+            ]
+            latent = self._expanding_branch[idx][1](torch.hstack([_contracting_branch_skip_connection, _transpose_output]))
+        return latent
 
 
 class UNet(torch.nn.Module):
@@ -72,9 +122,9 @@ class UNet(torch.nn.Module):
         self._expanding_branch = ExpandingBranch()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
-        _contracting_block_latent = self._contracting_branch(image)
-        _bottleneck_latent = self._bottleneck(_contracting_block_latent)
-        _expanding_block_output = self._expanding_branch(_bottleneck_latent)
+        _final_contracting_block_latent, _contracting_block_latents = self._contracting_branch(image)
+        _bottleneck_latent = self._bottleneck(_final_contracting_block_latent)
+        _expanding_block_output = self._expanding_branch(_bottleneck_latent, _contracting_block_latents)
 
 
 if __name__ == "__main__":
