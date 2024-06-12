@@ -2,6 +2,7 @@ from collections import OrderedDict
 from glob import glob
 from typing import List, Tuple
 
+import matplotlib.pyplot as plt
 import torch
 from torchvision.io import read_image
 from torchvision.transforms.v2 import Compose, ToDtype, ToImage
@@ -192,5 +193,17 @@ if __name__ == "__main__":
             batch_loss += loss
             loss.backward()
             optimizer.step()
-
+        _image_label_prediction = (
+            torch.cat(
+                [image[0], label[0].repeat(3, 1, 1), torch.nn.functional.sigmoid(prediction[0].detach().to("cpu")).repeat(3, 1, 1)],
+                dim=-1,
+            )
+            .permute(1, 2, 0)
+            .numpy()
+        )
+        plt.figure(figsize=(3, 1))
+        plt.imshow(_image_label_prediction)
+        plt.axis("off")
+        plt.savefig(f"prediction_{epoch}.png")
+        plt.close()
         print(f"Epoch loss: {batch_loss/len(dataloader)}")
