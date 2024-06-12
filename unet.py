@@ -114,20 +114,34 @@ class ExpandingBranch(torch.nn.Module):
         return latent
 
 
+class SegmentationHead(torch.nn.Module):
+    def __init__(self, in_channels=64, out_channels=2):
+        super().__init__()
+        self._segmentation_head = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=(1, 1), stride=(1, 1))
+        )
+
+    def forward(self, expanding_block_latent: torch.Tensor) -> torch.Tensor:
+        return self._segmentation_head(expanding_block_latent)
+
+
 class UNet(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self._contracting_branch = ContractingBranch()
         self._bottleneck = BottleNeck()
         self._expanding_branch = ExpandingBranch()
+        self._segmentation_head = SegmentationHead()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
-        _final_contracting_block_latent, _contracting_block_latents = self._contracting_branch(image)
-        _bottleneck_latent = self._bottleneck(_final_contracting_block_latent)
-        _expanding_block_output = self._expanding_branch(_bottleneck_latent, _contracting_block_latents)
+        _contracting_block_latent, _contracting_block_latents = self._contracting_branch(image)
+        _bottleneck_latent = self._bottleneck(_contracting_block_latent)
+        _expanding_block_latent = self._expanding_branch(_bottleneck_latent, _contracting_block_latents)
+        _segmentation_map = self._segmentation_head(_expanding_block_latent)
+        return _segmentation_map
 
 
 if __name__ == "__main__":
-    x = torch.randn(1, 3, 572, 572)
+    x = torch.randn(1, 3, 500, 500)
     model = UNet()
     model(x)
