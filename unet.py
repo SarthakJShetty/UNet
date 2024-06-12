@@ -125,19 +125,30 @@ class SegmentationHead(torch.nn.Module):
         return self._segmentation_head(expanding_block_latent)
 
 
+class UpsamplingLayer(torch.nn.Module):
+    def __init__(self, up_sampling_size: Tuple[int, int] = (500, 500)):
+        super().__init__()
+        self._upsampling_layer = torch.nn.Upsample(size=up_sampling_size)
+
+    def forward(self, expanding_block_latent: torch.Tensor):
+        return self._upsampling_layer(expanding_block_latent)
+
+
 class UNet(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self._contracting_branch = ContractingBranch()
         self._bottleneck = BottleNeck()
         self._expanding_branch = ExpandingBranch()
+        self._upsampling_layer = UpsamplingLayer()
         self._segmentation_head = SegmentationHead()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         _contracting_block_latent, _contracting_block_latents = self._contracting_branch(image)
         _bottleneck_latent = self._bottleneck(_contracting_block_latent)
         _expanding_block_latent = self._expanding_branch(_bottleneck_latent, _contracting_block_latents)
-        _segmentation_map = self._segmentation_head(_expanding_block_latent)
+        _upsampled_expanding_block_latent = self._upsampling_layer(_expanding_block_latent)
+        _segmentation_map = self._segmentation_head(_upsampled_expanding_block_latent)
         return _segmentation_map
 
 
