@@ -1,12 +1,7 @@
 from collections import OrderedDict
-from glob import glob
 from typing import List, Tuple
 
-import matplotlib.pyplot as plt
 import torch
-from torchvision.io import read_image
-from torchvision.transforms.v2 import Compose, ToDtype, ToImage
-from tqdm import tqdm
 
 
 class ContractingBranch(torch.nn.Module):
