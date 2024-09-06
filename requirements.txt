@@ -1,0 +1,6 @@
+--index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+torchaudio
+matplotlib==3.9.0
+tqdm
