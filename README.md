@@ -1,12 +1,16 @@
-# Vanilla U-Net Implementation
+# U-Net Implementation
 
 ## Intro:
 
-This is a vanilla U-Net implementation. I want to go back to my deep learning roots, and start working on implementing a few simple architectures. I'd like to tinker with training guardrails here as well, such as config systems, logging, `.toml` etc.
+This is a vanilla U-Net implementation (from the [original paper](https://arxiv.org/abs/1505.04597)) with an emphasis on readability and ease of use. The code uses the Carvana dataset, but can be made to work with any other dataset trivially.
 
-## Checklist:
+## Installation:
 
-- [ ] -  `model.py` file
-- [ ] - `hydra` config system
-- [ ] - `wandb` logging system
-- [ ] - `poetry`/`pyproject.toml` file
+```bash
+pip install -r requirements.txt
+```
+
+## Next steps:
+
+- [ ] - `hydra` integration
+- [ ] - `wandb` integration
